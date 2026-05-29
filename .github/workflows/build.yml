@@ -40,6 +40,12 @@ jobs:
         # system curl headers aren't found through obs-deps prefix shadowing.
         run: brew install premake cmake curl
 
+      - name: Select Xcode 15.4
+        # OBS macOS requires the 14.2+ SDK; the macos-14 runner has Xcode
+        # 15.4 installed but xcode-select defaults to an older Xcode whose
+        # SDK version OBS's CMake regex fails to parse.
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
       # ----- OBS SDK (build libobs from source, cache, upload as artifact) ---
       - name: Restore OBS SDK cache
         id: obs-cache
@@ -69,10 +75,24 @@ jobs:
         # CMAKE_PREFIX_PATH lists obs-deps first, then brew's curl.
         run: |
           CURL_PREFIX=$(brew --prefix curl)
+          SDK_PATH=$(xcrun --show-sdk-path)
+          echo "Using SDK: $SDK_PATH"
+          xcrun --show-sdk-version
+          echo "--- curl prefix layout ---"
+          ls -la "$CURL_PREFIX" || true
+          ls -la "$CURL_PREFIX/include" 2>/dev/null | head || true
+          ls -la "$CURL_PREFIX/lib"     2>/dev/null | head || true
+          if [ ! -f "$CURL_PREFIX/include/curl/curl.h" ] || [ ! -f "$CURL_PREFIX/lib/libcurl.dylib" ]; then
+              echo "ERROR: brew curl prefix is incomplete at $CURL_PREFIX" >&2
+              exit 1
+          fi
           cmake -S "$RUNNER_TEMP/obs-src" -B "$RUNNER_TEMP/obs-build" \
             -G Xcode \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/obs-install" \
-            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/obs-deps;$CURL_PREFIX" \
+            -DCMAKE_PREFIX_PATH="$CURL_PREFIX;$RUNNER_TEMP/obs-deps" \
+            -DCURL_INCLUDE_DIR="$CURL_PREFIX/include" \
+            -DCURL_LIBRARY="$CURL_PREFIX/lib/libcurl.dylib" \
+            -DCMAKE_OSX_SYSROOT="$SDK_PATH" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DENABLE_UI=OFF -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF \
