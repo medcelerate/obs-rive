@@ -250,6 +250,8 @@ elseif(WIN32)
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
     # Linux: Rive's GL backend uses desktop GL; we drive it via EGL.
+    set(THREADS_PREFER_PTHREAD_FLAG ON)
+    find_package(Threads REQUIRED)
     find_package(OpenGL REQUIRED)
     find_library(EGL_LIBRARY NAMES EGL)
     if(NOT EGL_LIBRARY)

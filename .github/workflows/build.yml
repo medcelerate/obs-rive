@@ -234,7 +234,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v1
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
@@ -252,7 +252,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v1
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         run: |
@@ -419,7 +419,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v1
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
@@ -439,7 +439,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v1
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         shell: pwsh
@@ -585,7 +585,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-linux-${{ steps.rive.outputs.sha }}-v1
+          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
@@ -605,7 +605,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-linux-${{ steps.rive.outputs.sha }}-v1
+          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         run: |
