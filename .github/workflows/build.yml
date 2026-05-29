@@ -120,9 +120,21 @@ jobs:
         # cmake/macos/compilerconfig.cmake) - has to be -G Xcode here.
         # CMAKE_PREFIX_PATH lists obs-deps first, then brew's curl.
         run: |
-          SDK_PATH=$(xcrun --show-sdk-path)
-          echo "Using SDK: $SDK_PATH"
-          xcrun --show-sdk-version
+          # OBS's compilerconfig.cmake captures the SDK version from the
+          # tail of CMAKE_OSX_SYSROOT via a regex that requires the path to
+          # end in 'MacOSX<X.Y>.sdk'. xcrun --show-sdk-path returns the
+          # version-less 'MacOSX.sdk' symlink, which makes the regex match
+          # nothing and OBS errors out with "Your macOS SDK version () is
+          # too low". So construct the versioned path explicitly.
+          SDK_VER=$(xcrun --show-sdk-version)
+          SDK_GENERIC=$(xcrun --show-sdk-path)
+          SDK_PATH="$(dirname "$SDK_GENERIC")/MacOSX${SDK_VER}.sdk"
+          if [ ! -d "$SDK_PATH" ]; then
+              echo "ERROR: versioned SDK dir $SDK_PATH not found" >&2
+              ls "$(dirname "$SDK_GENERIC")"
+              exit 1
+          fi
+          echo "Using SDK ${SDK_VER} at: $SDK_PATH"
           cmake -S "$RUNNER_TEMP/obs-src" -B "$RUNNER_TEMP/obs-build" \
             -G Xcode \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/obs-install" \
@@ -270,15 +282,50 @@ jobs:
             -DENABLE_AJA=OFF -DENABLE_DECKLINK=OFF -DENABLE_VIRTUALCAM=OFF `
             -DENABLE_RTMPS=OFF -DENABLE_WEBSOCKET=OFF
           cmake --build "$env:RUNNER_TEMP\obs-build" --config Release --target libobs --parallel
-          $ErrorActionPreference = 'Continue'
-          cmake --install "$env:RUNNER_TEMP\obs-build" --config Release --component obs_libraries
-          $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path "$env:RUNNER_TEMP\obs-install\include\obs\obs-module.h")) {
-              throw "libobs install incomplete - obs-module.h missing."
+
+          # cmake --install --component obs_libraries on Windows fails
+          # because OBS's UI subproject still emits an install rule for
+          # obs-frontend-api.dll even with ENABLE_UI=OFF, and the rule errors
+          # before libobs's headers are installed. So we assemble the SDK
+          # by hand from the source tree + the build outputs we just made.
+          $sdk = "$env:RUNNER_TEMP\obs-install"
+          $inc = "$sdk\include"
+          $bin = "$sdk\bin\64bit"
+          New-Item -ItemType Directory -Force -Path $inc, $bin | Out-Null
+
+          # Copy every header from $obs-src/libobs/ preserving subdir layout
+          # under $sdk/include/. Matches what 'obs_libraries' would install.
+          $srcLib = "$env:RUNNER_TEMP\obs-src\libobs"
+          Get-ChildItem -Path $srcLib -Recurse -File `
+              | Where-Object { $_.Name -match '\.(h|hpp)$' } `
+              | ForEach-Object {
+                  $rel = $_.FullName.Substring($srcLib.Length + 1)
+                  $dst = Join-Path $inc $rel
+                  $dstDir = Split-Path $dst -Parent
+                  if (-not (Test-Path $dstDir)) { New-Item -ItemType Directory -Force -Path $dstDir | Out-Null }
+                  Copy-Item $_.FullName $dst
+              }
+
+          # CMake generates obsconfig.h into the build tree; grab it.
+          $cfg = Get-ChildItem -Path "$env:RUNNER_TEMP\obs-build" -Recurse -Filter "obsconfig.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($cfg) { Copy-Item $cfg.FullName "$inc\obsconfig.h" }
+
+          # Built import lib + DLL.
+          $lib = Get-ChildItem -Path "$env:RUNNER_TEMP\obs-build" -Recurse -Filter "obs.lib" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $dll = Get-ChildItem -Path "$env:RUNNER_TEMP\obs-build" -Recurse -Filter "obs.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $lib) { throw "Could not find built obs.lib under $env:RUNNER_TEMP\obs-build" }
+          if (-not $dll) { throw "Could not find built obs.dll under $env:RUNNER_TEMP\obs-build" }
+          Copy-Item $lib.FullName "$bin\obs.lib"
+          Copy-Item $dll.FullName "$bin\obs.dll"
+
+          # Sanity-check the assembled SDK.
+          if (-not (Test-Path "$inc\obs-module.h")) {
+              throw "SDK assembly failed - obs-module.h missing under $inc"
           }
-          if (-not (Get-ChildItem -Path "$env:RUNNER_TEMP\obs-install" -Recurse -Filter "obs.lib" -ErrorAction SilentlyContinue)) {
-              throw "libobs install incomplete - obs.lib missing."
-          }
+          Write-Host "Assembled SDK:"
+          Write-Host "  headers:  $inc"
+          Write-Host "  libs:     $bin"
+          Get-ChildItem $bin
 
       - name: Save OBS SDK cache
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -367,10 +414,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build deps
-        # Minimal set for building libobs (UI/scripting/plugins/RTMPS/etc all
-        # disabled in CMake). FFmpeg + x264 are required by libobs itself
-        # (media-io/encoder-glue). pulse/udev cover audio + device monitor.
-        # llvm gives us llvm-ar for Rive's static-lib archiving.
+        # libcurl: required by OBS's deps/file-updater unconditionally,
+        # even with RTMPS/WEBSOCKET disabled.
+        # FFmpeg + x264: needed by libobs itself (media-io / encoder-glue).
+        # pulse/udev/dbus: misc audio + device monitor build-time deps.
+        # llvm: gives us llvm-ar, which Rive's premake uses to archive.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -379,6 +427,7 @@ jobs:
             libavcodec-dev libavformat-dev libavutil-dev \
             libswscale-dev libswresample-dev \
             libx264-dev libpulse-dev libudev-dev libdbus-1-dev \
+            libcurl4-openssl-dev \
             uthash-dev
 
       # ----- OBS SDK -----
