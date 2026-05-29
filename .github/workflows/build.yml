@@ -429,9 +429,38 @@ jobs:
           RIVE_BUILD_SYSTEM: ninja
         run: scripts\build_rive.bat release -- ${{ env.RIVE_NINJA_TARGETS }}
 
+      - name: Verify Rive .lib outputs
+        # libjpeg.lib has repeatedly come out corrupt on Windows. Catch
+        # malformed archives right at the build boundary so the cache never
+        # gets poisoned and the plugin link gets a clear message.
+        shell: pwsh
+        run: |
+          $libDir = "third_party\rive-runtime\renderer\out\release"
+          if (-not (Test-Path $libDir)) { throw "Rive output dir missing: $libDir" }
+          Write-Host "--- Rive .lib sizes ---"
+          Get-ChildItem -Path "$libDir\*.lib" | Sort-Object Length | Format-Table Name, Length
+          $broken = @()
+          foreach ($lib in Get-ChildItem -Path "$libDir\*.lib") {
+              if ($lib.Length -lt 10KB) {
+                  $broken += "$($lib.Name): suspiciously small ($($lib.Length) bytes)"
+                  continue
+              }
+              # dumpbin /headers exits 0 on success, !=0 on malformed archives.
+              & dumpbin /nologo /headers $lib.FullName *>$null
+              if ($LASTEXITCODE -ne 0) {
+                  $broken += "$($lib.Name): dumpbin /headers failed ($LASTEXITCODE)"
+              }
+          }
+          if ($broken.Count -gt 0) {
+              Write-Host "BROKEN LIBS:"; $broken | ForEach-Object { Write-Host "  $_" }
+              throw "Rive produced one or more malformed .lib archives - refusing to cache."
+          }
+          Write-Host "All Rive .libs look valid."
+
       - name: Save Rive build cache
         # Save before the plugin build so iterating on the plugin doesn't
-        # cost us the Rive build on every failed link.
+        # cost us the Rive build on every failed link. We only get here if
+        # the verification step above passed.
         if: steps.rive-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:

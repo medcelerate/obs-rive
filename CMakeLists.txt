@@ -261,6 +261,12 @@ else()
     # branch (includes glad_custom.h with GLuint/GLenum/etc). Must match how
     # the Rive runtime itself was compiled.
     target_compile_definitions(obs-rive PRIVATE RIVE_DESKTOP_GL)
+    # glad_custom.h + the generated glad headers live alongside the Rive
+    # renderer sources, not under renderer/include.
+    target_include_directories(obs-rive PRIVATE
+        "${RIVE_DIR}/renderer/glad"
+        "${RIVE_DIR}/renderer/glad/include"
+    )
     target_link_libraries(obs-rive PRIVATE
         ${EGL_LIBRARY}
         OpenGL::GL
