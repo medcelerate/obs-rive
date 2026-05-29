@@ -66,15 +66,35 @@ if(NOT libobs_FOUND)
     endif()
 
     if(NOT LIBOBS_INCLUDE_DIR AND LIBOBS_PATH)
-        find_path(LIBOBS_INCLUDE_DIR
-            NAMES obs-module.h
-            HINTS "${LIBOBS_PATH}/include" "${LIBOBS_PATH}" "${LIBOBS_PATH}/libobs"
-            PATH_SUFFIXES obs
-        )
-        find_library(LIBOBS_LIBRARY
-            NAMES obs libobs
-            HINTS "${LIBOBS_PATH}/lib" "${LIBOBS_PATH}/libobs" "${LIBOBS_PATH}/bin/64bit"
-        )
+        # Explicit checks instead of find_path: find_path with
+        # PATH_SUFFIXES has been seen to skip the bare directory on
+        # Windows. We know the install layouts our CI produces.
+        foreach(_sub "include" "include/obs" "libobs" "libobs/include")
+            set(_candidate "${LIBOBS_PATH}/${_sub}/obs-module.h")
+            message(STATUS "libobs probe: ${_candidate}")
+            if(EXISTS "${_candidate}")
+                message(STATUS "  -> found, LIBOBS_INCLUDE_DIR set")
+                set(LIBOBS_INCLUDE_DIR "${LIBOBS_PATH}/${_sub}")
+                break()
+            endif()
+        endforeach()
+
+        foreach(_libdir "bin/64bit" "lib" "lib64" "libobs")
+            foreach(_libname "obs.lib" "libobs.lib"
+                              "libobs.so" "libobs.so.0"
+                              "libobs.dylib")
+                set(_candidate "${LIBOBS_PATH}/${_libdir}/${_libname}")
+                message(STATUS "libobs probe: ${_candidate}")
+                if(EXISTS "${_candidate}")
+                    message(STATUS "  -> found, LIBOBS_LIBRARY set")
+                    set(LIBOBS_LIBRARY "${_candidate}")
+                    break()
+                endif()
+            endforeach()
+            if(LIBOBS_LIBRARY)
+                break()
+            endif()
+        endforeach()
     endif()
 
     if((NOT LIBOBS_INCLUDE_DIR OR NOT LIBOBS_LIBRARY) AND UNIX AND NOT APPLE)
