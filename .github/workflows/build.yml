@@ -483,7 +483,11 @@ jobs:
 
       # ----- Plugin -----
       - name: Configure plugin
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DLIBOBS_PATH="${{ env.OBS_PATH }}"
+        # Use the LLVM Clang toolset (-T ClangCL): drives MSBuild to use
+        # clang-cl + lld-link, the same toolchain Rive's Windows build uses.
+        # Standard MSVC link.exe consistently fails on libjpeg.lib with
+        # LNK1107; lld-link reads the archive correctly.
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL -DLIBOBS_PATH="${{ env.OBS_PATH }}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
@@ -651,7 +655,22 @@ jobs:
 
       # ----- Plugin -----
       - name: Configure plugin
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DLIBOBS_PATH="${OBS_PATH}"
+        # Build with clang + lld. Rive's static archives on Linux contain
+        # LLVM bitcode (built with clang+LTO); GNU ld (the default ld behind
+        # /usr/bin/cc) reports "file format not recognized". clang's driver
+        # and lld both speak bitcode natively.
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=lld" \
+            -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=lld" \
+            -DLIBOBS_PATH="${OBS_PATH}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
