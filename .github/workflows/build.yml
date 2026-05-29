@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-macos-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+          key: obs-sdk-macos-v2-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}
 
       - name: Clone OBS Studio source
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -167,14 +167,21 @@ jobs:
           # Copy with ditto to preserve Versions/Current symlinks.
           ditto "$fw" "$sdk/libobs.framework"
 
-          # The built framework lacks public headers; symlink them in from
-          # the source tree so plugins compile against the same API the
-          # framework binary exports.
+          # The built framework lacks public headers; copy them in from the
+          # source tree so the framework is self-contained (a symlink to
+          # obs-src would dangle on cache restore - that's not cached).
           fwOut="$sdk/libobs.framework"
           verDir=$(find "$fwOut/Versions" -maxdepth 1 -mindepth 1 -type d -not -name Current | head -n1)
           [ -n "$verDir" ] || { echo "ERROR: no Versions/<letter> dir in framework"; exit 1; }
           rm -rf "$verDir/Headers"
-          ln -s "$RUNNER_TEMP/obs-src/libobs" "$verDir/Headers"
+          mkdir -p "$verDir/Headers"
+          # rsync only header files, preserving subdir layout (util/, graphics/, etc).
+          rsync -a \
+              --include='*/' \
+              --include='*.h' --include='*.hpp' \
+              --exclude='*' \
+              "$RUNNER_TEMP/obs-src/libobs/" "$verDir/Headers/"
+          # Top-level Headers symlink (canonical framework layout).
           [ -L "$fwOut/Headers" ] || ln -s "Versions/Current/Headers" "$fwOut/Headers"
 
           # Pick up generated obsconfig.h - it lives in the build tree, not the source.
@@ -194,7 +201,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-macos-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+          key: obs-sdk-macos-v2-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}
 
       - name: Export OBS_PATH
         run: echo "OBS_PATH=$RUNNER_TEMP/obs-install" >> "$GITHUB_ENV"
@@ -287,7 +294,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-windows-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+          key: obs-sdk-windows-v2-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}
 
       - name: Clone OBS Studio source
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -368,15 +375,19 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-windows-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+          key: obs-sdk-windows-v2-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}
 
       - name: Locate OBS SDK
         shell: pwsh
         run: |
           $hdr = Get-ChildItem -Path "$env:RUNNER_TEMP\obs-install" -Recurse -Filter "obs-module.h" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $hdr) { throw "obs-module.h not found under SDK after build+install" }
-          $obsRoot = $hdr.Directory.Parent.Parent.FullName
-          "OBS_PATH=$obsRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          if (-not $hdr) { throw "obs-module.h not found under SDK after build" }
+          # Walk up past include/obs (or include/) to find the SDK root.
+          $dir = $hdr.Directory
+          if ($dir.Name -eq 'obs')     { $dir = $dir.Parent }
+          if ($dir.Name -eq 'include') { $dir = $dir.Parent }
+          "OBS_PATH=$($dir.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "OBS_PATH = $($dir.FullName)"
 
       - name: Upload OBS SDK artifact
         uses: actions/upload-artifact@v4
@@ -458,7 +469,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake ninja-build clang lld llvm \
+            build-essential cmake ninja-build clang lld llvm llvm-14 \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
             libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev \
             libswscale-dev libswresample-dev \
@@ -471,6 +482,15 @@ jobs:
             libxkbcommon-dev wayland-protocols \
             libjansson-dev \
             uthash-dev
+          # Ensure versionless llvm-ar / llvm-ranlib exist - Ubuntu's `llvm`
+          # metapackage sometimes only provides llvm-ar-14 etc, and Rive's
+          # build invokes `llvm-ar` without a version suffix.
+          for tool in llvm-ar llvm-ranlib llvm-nm llvm-strip; do
+              if ! command -v $tool >/dev/null 2>&1 && command -v ${tool}-14 >/dev/null 2>&1; then
+                  sudo ln -sf $(command -v ${tool}-14) /usr/local/bin/$tool
+              fi
+          done
+          which llvm-ar && llvm-ar --version | head -n1 || true
 
       # ----- OBS SDK -----
       - name: Restore OBS SDK cache
@@ -478,7 +498,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-linux-${{ env.OBS_VERSION }}-v1
+          key: obs-sdk-linux-v2-${{ env.OBS_VERSION }}
 
       - name: Clone OBS Studio source
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -508,7 +528,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-linux-${{ env.OBS_VERSION }}-v1
+          key: obs-sdk-linux-v2-${{ env.OBS_VERSION }}
 
       - name: Export OBS_PATH
         run: echo "OBS_PATH=$RUNNER_TEMP/obs-install" >> "$GITHUB_ENV"
@@ -545,7 +565,9 @@ jobs:
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
-        run: ./scripts/build_rive.sh release
+        # Pass explicit make targets so gmake2 skips glfw3/path_fiddle (the
+        # Rive sample app needs libxcursor-dev etc that we don't install).
+        run: ./scripts/build_rive.sh release -- ${{ env.RIVE_NINJA_TARGETS }}
 
       # ----- Plugin -----
       - name: Configure plugin
