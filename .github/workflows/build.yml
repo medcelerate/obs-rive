@@ -29,10 +29,19 @@ jobs:
       - name: Install tools
         run: brew install premake cmake
 
-      - name: Download OBS Studio (for libobs.framework + headers)
-        # OBS Studio ships a macOS .dmg containing OBS.app. libobs is bundled
-        # inside as a framework, but the exact path and the .app's name have
-        # moved between releases - hence the find-based lookup below.
+      - name: Clone OBS Studio source (for headers)
+        # The macOS DMG's libobs.framework is runtime-only - no Headers/.
+        # We pull headers from a shallow source clone and graft them onto the
+        # framework below so CMake sees a complete one.
+        env:
+          OBS_VERSION: "30.2.3"
+        run: |
+          git clone --depth 1 --branch "${OBS_VERSION}" --no-recurse-submodules \
+            https://github.com/obsproject/obs-studio.git "$RUNNER_TEMP/obs-src"
+          [ -f "$RUNNER_TEMP/obs-src/libobs/obs-module.h" ] || {
+              echo "ERROR: obs-module.h not in cloned source tree" >&2; exit 1; }
+
+      - name: Download OBS Studio macOS (for libobs.framework binary)
         env:
           OBS_VERSION: "30.2.3"
         run: |
@@ -40,42 +49,38 @@ jobs:
           dmg="OBS-Studio-${OBS_VERSION}-macOS-Apple.dmg"
           url="https://github.com/obsproject/obs-studio/releases/download/${OBS_VERSION}/${dmg}"
           curl -fsSL -o "$RUNNER_TEMP/$dmg" "$url"
-          # hdiutil attach output is tab-separated; the mount-point column
-          # (last field) can contain spaces ("OBS Studio"). awk -F'\t' picks
-          # the whole field intact.
           mp=$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/$dmg" | awk -F'\t' '/\/Volumes\// {print $NF}' | tail -n1)
           if [ -z "$mp" ] || [ ! -d "$mp" ]; then
               echo "ERROR: could not parse mount point from hdiutil attach output" >&2
               exit 1
           fi
           echo "Mounted at \"$mp\""
-          echo "--- volume contents ---"
-          ls "$mp"
           app=$(find "$mp" -maxdepth 2 -name "*.app" -type d | head -n1)
-          echo "App bundle: $app"
-          echo "--- Contents/Frameworks ---"
-          ls "$app/Contents/Frameworks" 2>/dev/null || echo "(no Frameworks dir at top level)"
-          # Walk the whole bundle if the framework isn't where it used to be.
           fw=$(find "$app" -type d -name "libobs.framework" | head -n1)
           if [ -z "$fw" ]; then
-              echo "--- full bundle layout (depth 4) ---"
-              find "$app" -maxdepth 4 -name "libobs*"
+              echo "--- bundle layout ---"; find "$app" -maxdepth 4 -name "libobs*"
               hdiutil detach "$mp" -force || true
-              echo "ERROR: libobs.framework not found inside $app" >&2
-              exit 1
+              echo "ERROR: libobs.framework not found inside $app" >&2; exit 1
           fi
-          echo "Found libobs.framework at $fw"
           mkdir -p "$RUNNER_TEMP/obs"
-          # ditto preserves framework Versions/Current symlinks correctly;
-          # plain cp -R has been seen to break the Headers symlink chain on
-          # bundles copied off a read-only DMG.
           ditto "$fw" "$RUNNER_TEMP/obs/libobs.framework"
           hdiutil detach "$mp" -force
-          echo "--- copied framework layout ---"
-          ls -la "$RUNNER_TEMP/obs/libobs.framework"
-          ls -la "$RUNNER_TEMP/obs/libobs.framework/Headers" | head
-          [ -f "$RUNNER_TEMP/obs/libobs.framework/Headers/obs-module.h" ] || {
-              echo "ERROR: Headers/obs-module.h not present after copy" >&2; exit 1; }
+
+          # The OBS macOS distribution strips Headers from libobs.framework.
+          # Graft them in from the cloned source so CMake's framework-style
+          # discovery works: Headers -> Versions/Current/Headers -> A/Headers.
+          fwOut="$RUNNER_TEMP/obs/libobs.framework"
+          verDir=$(find "$fwOut/Versions" -maxdepth 1 -mindepth 1 -type d -not -name Current | head -n1)
+          [ -n "$verDir" ] || { echo "ERROR: no Versions/<letter> dir in framework"; exit 1; }
+          rm -rf "$verDir/Headers"
+          ln -s "$RUNNER_TEMP/obs-src/libobs" "$verDir/Headers"
+          [ -L "$fwOut/Headers" ] || ln -s "Versions/Current/Headers" "$fwOut/Headers"
+
+          echo "--- final framework layout ---"
+          ls -la "$fwOut"
+          ls "$fwOut/Headers" | head
+          [ -f "$fwOut/Headers/obs-module.h" ] || {
+              echo "ERROR: obs-module.h not resolvable via framework Headers"; exit 1; }
           echo "OBS_PATH=$RUNNER_TEMP/obs" >> "$GITHUB_ENV"
 
       - name: Resolve Rive commit
