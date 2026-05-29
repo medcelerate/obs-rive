@@ -36,7 +36,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: brew install premake cmake
+        # curl: OBS's deps/file-updater requires libcurl unconditionally; the
+        # system curl headers aren't found through obs-deps prefix shadowing.
+        run: brew install premake cmake curl
 
       # ----- OBS SDK (build libobs from source, cache, upload as artifact) ---
       - name: Restore OBS SDK cache
@@ -64,11 +66,13 @@ jobs:
         if: steps.obs-cache.outputs.cache-hit != 'true'
         # OBS macOS CMake guards against non-Xcode generators (see
         # cmake/macos/compilerconfig.cmake) - has to be -G Xcode here.
+        # CMAKE_PREFIX_PATH lists obs-deps first, then brew's curl.
         run: |
+          CURL_PREFIX=$(brew --prefix curl)
           cmake -S "$RUNNER_TEMP/obs-src" -B "$RUNNER_TEMP/obs-build" \
             -G Xcode \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/obs-install" \
-            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/obs-deps" \
+            -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/obs-deps;$CURL_PREFIX" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DENABLE_UI=OFF -DENABLE_SCRIPTING=OFF -DENABLE_BROWSER=OFF \
