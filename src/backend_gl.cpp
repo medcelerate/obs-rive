@@ -14,11 +14,15 @@
 #include <EGL/eglext.h>
 
 #include <cstring>
+#include <string>
 #include <vector>
 
 // Rive's GL renderer expects glad-loaded entry points; pull in the loader and
-// the GLES3-flavored headers it ships.
+// the GLES3-flavored headers it ships. texture.hpp must come before
+// render_context_impl.hpp so rcp<rive::gpu::Texture>'s dtor has the full
+// type (same trick we use in backend_d3d11.cpp).
 #include "rive/renderer/gl/gles3.hpp"
+#include "rive/renderer/texture.hpp"
 #include "rive/renderer/gl/render_context_gl_impl.hpp"
 #include "rive/renderer/gl/render_target_gl.hpp"
 #include "rive/renderer/render_context.hpp"
@@ -35,7 +39,8 @@ public:
         if (mEglDpy != EGL_NO_DISPLAY && mEglCtx != EGL_NO_CONTEXT) {
             eglMakeCurrent(mEglDpy, mEglSurface, mEglSurface, mEglCtx);
         }
-        if (mTex) { glDeleteTextures(1, &mTex); mTex = 0; }
+        if (mReadFbo) { glDeleteFramebuffers(1, &mReadFbo); mReadFbo = 0; }
+        if (mTex)     { glDeleteTextures(1, &mTex);         mTex = 0;     }
         mRenderTarget.reset();
         if (mRenderContext) {
             mRenderContext->releaseResources();
@@ -135,7 +140,8 @@ public:
         if (w == 0 || h == 0) { err = "Render target has zero size."; return false; }
         if (mTex && mW == w && mH == h && mRenderTarget) return true;
 
-        if (mTex) { glDeleteTextures(1, &mTex); mTex = 0; }
+        if (mReadFbo) { glDeleteFramebuffers(1, &mReadFbo); mReadFbo = 0; }
+        if (mTex)     { glDeleteTextures(1, &mTex);         mTex = 0;     }
 
         glGenTextures(1, &mTex);
         glBindTexture(GL_TEXTURE_2D, mTex);
@@ -144,6 +150,20 @@ public:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // Readback FBO that aliases the offscreen texture as color
+        // attachment 0, so we can glReadPixels into client memory.
+        // (glGetTexImage isn't available in Rive's glad subset.)
+        glGenFramebuffers(1, &mReadFbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, mReadFbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                               GL_TEXTURE_2D, mTex, 0);
+        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+            err = "Readback FBO incomplete (status=" + std::to_string(status) + ")";
+            return false;
+        }
 
         auto rt = rive::make_rcp<rive::gpu::TextureRenderTargetGL>(w, h);
         rt->setTargetTexture(mTex);
@@ -176,9 +196,11 @@ public:
 
         // Read pixels: GL returns RGBA, OBS / our cross-platform contract is
         // BGRA top-down. Swap R/B and Y-flip on the fly.
-        glBindTexture(GL_TEXTURE_2D, mTex);
-        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, mReadBuf.data());
-        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, mReadFbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glReadPixels(0, 0, (GLsizei)mW, (GLsizei)mH,
+                     GL_RGBA, GL_UNSIGNED_BYTE, mReadBuf.data());
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         const size_t rowBytes = (size_t)mW * 4;
         uint8_t* d = (uint8_t*)dst;
@@ -201,6 +223,7 @@ private:
     EGLContext mEglCtx = EGL_NO_CONTEXT;
 
     GLuint                                    mTex = 0;
+    GLuint                                    mReadFbo = 0;
     uint32_t                                  mW = 0, mH = 0;
     std::vector<uint8_t>                      mReadBuf;
     std::unique_ptr<rive::gpu::RenderContext> mRenderContext;

@@ -423,8 +423,22 @@ jobs:
           path: third_party/rive-runtime/renderer/out
           key: rive-windows-${{ steps.rive.outputs.sha }}-v3
 
+      - name: Force libjpeg rebuild on cache hit
+        # GitHub Actions cache save/restore mangles libjpeg.lib (consistently
+        # truncates near byte 0x8A4F0). Delete its outputs so ninja rebuilds
+        # it from source - cheap on top of an otherwise warm cache.
+        if: steps.rive-cache.outputs.cache-hit == 'true'
+        shell: pwsh
+        run: |
+          $libsDir = "third_party\rive-runtime\renderer\out\release"
+          Remove-Item -Force -ErrorAction SilentlyContinue "$libsDir\libjpeg.lib"
+          Remove-Item -Recurse -Force -ErrorAction SilentlyContinue "$libsDir\obj\default\libjpeg"
+          Write-Host "libjpeg outputs purged; ninja will rebuild from source."
+
       - name: Build Rive runtime
-        if: steps.rive-cache.outputs.cache-hit != 'true'
+        # Always runs. On cache miss this is the full Rive build; on cache hit
+        # ninja sees every target as up-to-date except libjpeg (which we just
+        # deleted), so only that target rebuilds (~30s).
         env:
           RIVE_BUILD_SYSTEM: ninja
         run: scripts\build_rive.bat release -- ${{ env.RIVE_NINJA_TARGETS }}
