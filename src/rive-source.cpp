@@ -9,7 +9,23 @@
 // list of artboards, state machines, SMI inputs, and view-model properties
 // reflects the currently loaded .riv file.
 
+// rive-core.h must come BEFORE obs-module.h: OBS's graphics/math-defs.h
+// defines a bare `EPSILON` macro that collides with `constexpr float
+// rive::EPSILON` once the preprocessor mangles it. Including Rive first
+// (then defensively undefining the few OBS shorthand macros we don't use)
+// keeps both worlds happy.
+#include "rive-core.h"
+
 #include <obs-module.h>
+#ifdef EPSILON
+#  undef EPSILON
+#endif
+#ifdef MIN
+#  undef MIN
+#endif
+#ifdef MAX
+#  undef MAX
+#endif
 
 #include <atomic>
 #include <chrono>
@@ -18,8 +34,6 @@
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include "rive-core.h"
 
 namespace {
 

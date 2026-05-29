@@ -498,7 +498,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-linux-v2-${{ env.OBS_VERSION }}
+          key: obs-sdk-linux-v3-${{ env.OBS_VERSION }}
 
       - name: Clone OBS Studio source
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -519,16 +519,40 @@ jobs:
             -DENABLE_RTMPS=OFF -DENABLE_WEBSOCKET=OFF \
             -DENABLE_PIPEWIRE=OFF -DENABLE_ALSA=OFF -DENABLE_JACK=OFF
           cmake --build "$RUNNER_TEMP/obs-build" --target libobs --parallel
-          cmake --install "$RUNNER_TEMP/obs-build" --component obs_libraries || true
-          find "$RUNNER_TEMP/obs-install" -name "obs-module.h" -print -quit | grep -q . || \
-            { echo "obs-module.h missing"; exit 1; }
+
+          # Assemble the SDK by hand (same as Windows/macOS). cmake --install
+          # picks up disabled subprojects that error out partway and leave
+          # an incomplete tree.
+          sdk="$RUNNER_TEMP/obs-install"
+          inc="$sdk/include"
+          libDir="$sdk/lib"
+          mkdir -p "$inc" "$libDir"
+
+          rsync -a \
+              --include='*/' --include='*.h' --include='*.hpp' --exclude='*' \
+              "$RUNNER_TEMP/obs-src/libobs/" "$inc/"
+
+          cfg=$(find "$RUNNER_TEMP/obs-build" -name "obsconfig.h" | head -n1)
+          [ -n "$cfg" ] && cp "$cfg" "$inc/obsconfig.h"
+
+          # Copy the built shared library + any versioned variants/symlinks.
+          built_so=$(find "$RUNNER_TEMP/obs-build" -name "libobs.so*" -type f | head -n1)
+          [ -n "$built_so" ] || { echo "libobs.so not found in build tree"; \
+              find "$RUNNER_TEMP/obs-build" -name "libobs*"; exit 1; }
+          cp -a $(dirname "$built_so")/libobs.so* "$libDir/" 2>/dev/null || cp "$built_so" "$libDir/"
+
+          [ -f "$inc/obs-module.h" ] || { echo "obs-module.h missing under $inc"; exit 1; }
+          [ -f "$libDir/libobs.so" ] || ln -sf $(basename $(ls "$libDir"/libobs.so* | head -n1)) "$libDir/libobs.so"
+          echo "--- assembled SDK ---"
+          ls "$inc" | head
+          ls "$libDir"
 
       - name: Save OBS SDK cache
         if: steps.obs-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/obs-install
-          key: obs-sdk-linux-v2-${{ env.OBS_VERSION }}
+          key: obs-sdk-linux-v3-${{ env.OBS_VERSION }}
 
       - name: Export OBS_PATH
         run: echo "OBS_PATH=$RUNNER_TEMP/obs-install" >> "$GITHUB_ENV"

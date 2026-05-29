@@ -38,6 +38,12 @@ endif()
 #   3. pkg-config (typical on Linux distros).
 
 set(LIBOBS_PATH "" CACHE PATH "Path to an OBS Studio install or build tree")
+# Backslash-to-forward-slash conversion: -DLIBOBS_PATH="D:\..." on Windows
+# arrives with backslashes that confuse find_path on some CMake versions.
+if(LIBOBS_PATH)
+    file(TO_CMAKE_PATH "${LIBOBS_PATH}" LIBOBS_PATH)
+endif()
+message(STATUS "LIBOBS_PATH = ${LIBOBS_PATH}")
 
 find_package(libobs CONFIG QUIET)
 if(NOT libobs_FOUND)
@@ -83,6 +89,29 @@ if(NOT libobs_FOUND)
     endif()
 
     if(NOT LIBOBS_INCLUDE_DIR OR NOT LIBOBS_LIBRARY)
+        message(STATUS "Diagnostic: LIBOBS_INCLUDE_DIR = ${LIBOBS_INCLUDE_DIR}")
+        message(STATUS "Diagnostic: LIBOBS_LIBRARY     = ${LIBOBS_LIBRARY}")
+        if(LIBOBS_PATH)
+            message(STATUS "Diagnostic: LIBOBS_PATH contents:")
+            file(GLOB _children RELATIVE "${LIBOBS_PATH}" "${LIBOBS_PATH}/*")
+            foreach(_c ${_children})
+                message(STATUS "  ${_c}")
+            endforeach()
+            if(EXISTS "${LIBOBS_PATH}/include")
+                file(GLOB _inc RELATIVE "${LIBOBS_PATH}/include" "${LIBOBS_PATH}/include/*")
+                message(STATUS "Diagnostic: LIBOBS_PATH/include contents:")
+                foreach(_c ${_inc})
+                    message(STATUS "  ${_c}")
+                endforeach()
+            endif()
+            if(EXISTS "${LIBOBS_PATH}/bin/64bit")
+                file(GLOB _bin RELATIVE "${LIBOBS_PATH}/bin/64bit" "${LIBOBS_PATH}/bin/64bit/*")
+                message(STATUS "Diagnostic: LIBOBS_PATH/bin/64bit contents:")
+                foreach(_c ${_bin})
+                    message(STATUS "  ${_c}")
+                endforeach()
+            endif()
+        endif()
         message(FATAL_ERROR
             "Could not find libobs. Pass -DLIBOBS_PATH=<obs install or build dir, "
             "or libobs.framework on macOS>, or install libobs system-wide.")
