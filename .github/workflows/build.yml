@@ -62,9 +62,11 @@ jobs:
 
       - name: Configure + build libobs
         if: steps.obs-cache.outputs.cache-hit != 'true'
+        # OBS macOS CMake guards against non-Xcode generators (see
+        # cmake/macos/compilerconfig.cmake) - has to be -G Xcode here.
         run: |
           cmake -S "$RUNNER_TEMP/obs-src" -B "$RUNNER_TEMP/obs-build" \
-            -DCMAKE_BUILD_TYPE=Release \
+            -G Xcode \
             -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/obs-install" \
             -DCMAKE_PREFIX_PATH="$RUNNER_TEMP/obs-deps" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
@@ -306,25 +308,19 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build deps
-        # build-essential / cmake / ninja: standard.
-        # clang + lld + llvm: Rive's premake config uses llvm-ar for archiving.
-        # libegl/libgl-dev: for our GL backend.
-        # libavcodec/libavformat/libavutil/libswscale/libswresample-dev,
-        # libx264-dev: needed by OBS's libobs even with UI/plugins disabled.
-        # libpulse-dev/libudev-dev/libdbus-1-dev: misc OBS build-time deps.
+        # Minimal set for building libobs (UI/scripting/plugins/RTMPS/etc all
+        # disabled in CMake). FFmpeg + x264 are required by libobs itself
+        # (media-io/encoder-glue). pulse/udev cover audio + device monitor.
+        # llvm gives us llvm-ar for Rive's static-lib archiving.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build clang lld llvm \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
             libavcodec-dev libavformat-dev libavutil-dev \
-            libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev \
-            libx264-dev \
-            libpulse-dev libudev-dev libdbus-1-dev \
-            libxcb1-dev libxcb-shm0-dev libxcb-xinerama0-dev libxcb-randr0-dev \
-            libxcb-xfixes0-dev libxcomposite-dev libxinerama-dev libxrandr-dev \
-            libcurl4-openssl-dev libmbedtls-dev libluajit-5.1-dev \
-            uthash-dev libpipewire-0.3-dev libdatachannel-dev
+            libswscale-dev libswresample-dev \
+            libx264-dev libpulse-dev libudev-dev libdbus-1-dev \
+            uthash-dev
 
       # ----- OBS SDK -----
       - name: Restore OBS SDK cache
