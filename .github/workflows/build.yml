@@ -30,19 +30,36 @@ jobs:
         run: brew install premake cmake
 
       - name: Download OBS Studio (for libobs.framework + headers)
-        # OBS Studio ships a macOS .dmg with libobs.framework inside the .app.
-        # There's no Homebrew formula and no separate SDK tarball, so we mount
-        # the dmg and copy the framework out for CMake to consume.
+        # OBS Studio ships a macOS .dmg containing OBS.app. libobs is bundled
+        # inside as a framework, but the exact path and the .app's name have
+        # moved between releases - hence the find-based lookup below.
         env:
           OBS_VERSION: "30.2.3"
         run: |
+          set -e
           dmg="OBS-Studio-${OBS_VERSION}-macOS-Apple.dmg"
           url="https://github.com/obsproject/obs-studio/releases/download/${OBS_VERSION}/${dmg}"
           curl -fsSL -o "$RUNNER_TEMP/$dmg" "$url"
           mp=$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/$dmg" | awk 'END{print $3}')
           echo "Mounted at $mp"
+          echo "--- volume contents ---"
+          ls "$mp"
+          app=$(find "$mp" -maxdepth 2 -name "*.app" -type d | head -n1)
+          echo "App bundle: $app"
+          echo "--- Contents/Frameworks ---"
+          ls "$app/Contents/Frameworks" 2>/dev/null || echo "(no Frameworks dir at top level)"
+          # Walk the whole bundle if the framework isn't where it used to be.
+          fw=$(find "$app" -type d -name "libobs.framework" | head -n1)
+          if [ -z "$fw" ]; then
+              echo "--- full bundle layout (depth 4) ---"
+              find "$app" -maxdepth 4 -name "libobs*"
+              hdiutil detach "$mp" -force || true
+              echo "ERROR: libobs.framework not found inside $app" >&2
+              exit 1
+          fi
+          echo "Found libobs.framework at $fw"
           mkdir -p "$RUNNER_TEMP/obs"
-          cp -R "$mp/OBS.app/Contents/Frameworks/libobs.framework" "$RUNNER_TEMP/obs/"
+          cp -R "$fw" "$RUNNER_TEMP/obs/"
           hdiutil detach "$mp" -force
           ls "$RUNNER_TEMP/obs/libobs.framework/Headers" | head
           echo "OBS_PATH=$RUNNER_TEMP/obs" >> "$GITHUB_ENV"
@@ -219,6 +236,7 @@ jobs:
           dest="$RUNNER_TEMP/premake"
           mkdir -p "$dest"
           curl -fsSL "$url" | tar -xz -C "$dest"
+          chmod +x "$dest/premake5"
           echo "$dest" >> "$GITHUB_PATH"
           "$dest/premake5" --version
 
