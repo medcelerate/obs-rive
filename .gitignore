@@ -1,0 +1,8 @@
+.claude/
+build/
+DerivedData/
+third_party/rive-runtime/
+.DS_Store
+*.dSYM/
+.vs/
+.vscode/
