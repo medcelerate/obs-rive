@@ -257,6 +257,10 @@ else()
     if(NOT EGL_LIBRARY)
         message(FATAL_ERROR "EGL not found. Install libegl1-mesa-dev or equivalent.")
     endif()
+    # RIVE_DESKTOP_GL switches rive/renderer/gl/gles3.hpp into the desktop-GL
+    # branch (includes glad_custom.h with GLuint/GLenum/etc). Must match how
+    # the Rive runtime itself was compiled.
+    target_compile_definitions(obs-rive PRIVATE RIVE_DESKTOP_GL)
     target_link_libraries(obs-rive PRIVATE
         ${EGL_LIBRARY}
         OpenGL::GL

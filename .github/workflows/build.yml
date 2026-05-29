@@ -240,19 +240,21 @@ jobs:
         if: steps.rive-cache.outputs.cache-hit != 'true'
         run: ./scripts/build_rive.sh release
 
+      - name: Save Rive build cache
+        # Save before the plugin build so iterating on the plugin doesn't
+        # cost us the 10-minute Rive build on every failed link.
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
+
       # ----- Plugin -----
       - name: Configure plugin
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DLIBOBS_PATH="${OBS_PATH}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
-
-      - name: Save Rive build cache
-        if: steps.rive-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: third_party/rive-runtime/renderer/out
-          key: rive-macos-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         run: |
@@ -419,7 +421,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
@@ -427,19 +429,21 @@ jobs:
           RIVE_BUILD_SYSTEM: ninja
         run: scripts\build_rive.bat release -- ${{ env.RIVE_NINJA_TARGETS }}
 
+      - name: Save Rive build cache
+        # Save before the plugin build so iterating on the plugin doesn't
+        # cost us the Rive build on every failed link.
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-windows-${{ steps.rive.outputs.sha }}-v3
+
       # ----- Plugin -----
       - name: Configure plugin
         run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DLIBOBS_PATH="${{ env.OBS_PATH }}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
-
-      - name: Save Rive build cache
-        if: steps.rive-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: third_party/rive-runtime/renderer/out
-          key: rive-windows-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         shell: pwsh
@@ -593,19 +597,21 @@ jobs:
         # Rive sample app needs libxcursor-dev etc that we don't install).
         run: ./scripts/build_rive.sh release -- ${{ env.RIVE_NINJA_TARGETS }}
 
+      - name: Save Rive build cache
+        # Save before the plugin build so iterating on the plugin doesn't
+        # cost us the Rive build on every failed link.
+        if: steps.rive-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: third_party/rive-runtime/renderer/out
+          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
+
       # ----- Plugin -----
       - name: Configure plugin
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DLIBOBS_PATH="${OBS_PATH}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
-
-      - name: Save Rive build cache
-        if: steps.rive-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: third_party/rive-runtime/renderer/out
-          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
 
       - name: Package
         run: |
