@@ -147,11 +147,46 @@ jobs:
             -DENABLE_AJA=OFF -DENABLE_DECKLINK=OFF -DENABLE_VIRTUALCAM=OFF \
             -DENABLE_RTMPS=OFF -DENABLE_WEBSOCKET=OFF
           cmake --build "$RUNNER_TEMP/obs-build" --config Release --target libobs --parallel
-          # Tolerate post-libobs install errors from disabled subprojects.
-          cmake --install "$RUNNER_TEMP/obs-build" --config Release --component obs_libraries || true
-          # Verify the SDK is whole before declaring success.
-          find "$RUNNER_TEMP/obs-install" -name "obs-module.h" -print -quit | grep -q . || \
-            { echo "obs-module.h missing"; exit 1; }
+
+          # cmake --install on macOS errors out on disabled UI/frontend-api
+          # targets - same as Windows. Assemble the SDK by hand from the
+          # build output + source headers instead.
+          sdk="$RUNNER_TEMP/obs-install"
+          mkdir -p "$sdk"
+
+          # Locate the built framework (Xcode generator writes it under
+          # libobs/<config>/libobs.framework).
+          fw=$(find "$RUNNER_TEMP/obs-build" -type d -name "libobs.framework" -path "*/Release/*" | head -n1)
+          if [ -z "$fw" ]; then
+              fw=$(find "$RUNNER_TEMP/obs-build" -type d -name "libobs.framework" | head -n1)
+          fi
+          [ -n "$fw" ] || { echo "ERROR: built libobs.framework not found"; exit 1; }
+          echo "Built framework: $fw"
+
+          # Copy with ditto to preserve Versions/Current symlinks.
+          ditto "$fw" "$sdk/libobs.framework"
+
+          # The built framework lacks public headers; symlink them in from
+          # the source tree so plugins compile against the same API the
+          # framework binary exports.
+          fwOut="$sdk/libobs.framework"
+          verDir=$(find "$fwOut/Versions" -maxdepth 1 -mindepth 1 -type d -not -name Current | head -n1)
+          [ -n "$verDir" ] || { echo "ERROR: no Versions/<letter> dir in framework"; exit 1; }
+          rm -rf "$verDir/Headers"
+          ln -s "$RUNNER_TEMP/obs-src/libobs" "$verDir/Headers"
+          [ -L "$fwOut/Headers" ] || ln -s "Versions/Current/Headers" "$fwOut/Headers"
+
+          # Pick up generated obsconfig.h - it lives in the build tree, not the source.
+          cfg=$(find "$RUNNER_TEMP/obs-build" -name "obsconfig.h" | head -n1)
+          if [ -n "$cfg" ]; then
+              cp "$cfg" "$verDir/Headers/obsconfig.h"
+          fi
+
+          [ -f "$fwOut/Headers/obs-module.h" ] || {
+              echo "ERROR: obs-module.h not resolvable via framework Headers"; exit 1; }
+          echo "--- final SDK layout ---"
+          ls -la "$fwOut"
+          ls "$fwOut/Headers" | head
 
       - name: Save OBS SDK cache
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -424,7 +459,7 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake ninja-build clang lld llvm \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
-            libavcodec-dev libavformat-dev libavutil-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libavdevice-dev \
             libswscale-dev libswresample-dev \
             libx264-dev libpulse-dev libudev-dev libdbus-1-dev \
             libcurl4-openssl-dev \
