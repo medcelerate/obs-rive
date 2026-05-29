@@ -154,13 +154,14 @@ jobs:
           sdk="$RUNNER_TEMP/obs-install"
           mkdir -p "$sdk"
 
-          # Locate the built framework (Xcode generator writes it under
-          # libobs/<config>/libobs.framework).
-          fw=$(find "$RUNNER_TEMP/obs-build" -type d -name "libobs.framework" -path "*/Release/*" | head -n1)
-          if [ -z "$fw" ]; then
-              fw=$(find "$RUNNER_TEMP/obs-build" -type d -name "libobs.framework" | head -n1)
-          fi
-          [ -n "$fw" ] || { echo "ERROR: built libobs.framework not found"; exit 1; }
+          # Locate the built framework. Xcode also emits a stub framework
+          # under build/EagerLinkingTBDs/ for incremental link; skip that
+          # by only searching the libobs/ target output dir.
+          fw=$(find "$RUNNER_TEMP/obs-build/libobs" -type d -name "libobs.framework" \
+               -not -path "*/EagerLinkingTBDs/*" | head -n1)
+          [ -n "$fw" ] || { echo "ERROR: built libobs.framework not found under libobs/"; \
+                             find "$RUNNER_TEMP/obs-build" -type d -name "libobs.framework"; \
+                             exit 1; }
           echo "Built framework: $fw"
 
           # Copy with ditto to preserve Versions/Current symlinks.
@@ -463,6 +464,9 @@ jobs:
             libswscale-dev libswresample-dev \
             libx264-dev libpulse-dev libudev-dev libdbus-1-dev \
             libcurl4-openssl-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-randr0-dev libxcb-xinerama0-dev \
+            libxcb-shm0-dev libxcb-xfixes0-dev libxcb-composite0-dev \
+            libxcomposite-dev libxinerama-dev libxrandr-dev libx11-dev \
             uthash-dev
 
       # ----- OBS SDK -----
