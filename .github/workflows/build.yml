@@ -27,7 +27,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install tools
-        run: brew install premake cmake obs
+        run: brew install premake cmake
+
+      - name: Download OBS Studio (for libobs.framework + headers)
+        # OBS Studio ships a macOS .dmg with libobs.framework inside the .app.
+        # There's no Homebrew formula and no separate SDK tarball, so we mount
+        # the dmg and copy the framework out for CMake to consume.
+        env:
+          OBS_VERSION: "30.2.3"
+        run: |
+          dmg="OBS-Studio-${OBS_VERSION}-macOS-Apple.dmg"
+          url="https://github.com/obsproject/obs-studio/releases/download/${OBS_VERSION}/${dmg}"
+          curl -fsSL -o "$RUNNER_TEMP/$dmg" "$url"
+          mp=$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/$dmg" | awk 'END{print $3}')
+          echo "Mounted at $mp"
+          mkdir -p "$RUNNER_TEMP/obs"
+          cp -R "$mp/OBS.app/Contents/Frameworks/libobs.framework" "$RUNNER_TEMP/obs/"
+          hdiutil detach "$mp" -force
+          ls "$RUNNER_TEMP/obs/libobs.framework/Headers" | head
+          echo "OBS_PATH=$RUNNER_TEMP/obs" >> "$GITHUB_ENV"
 
       - name: Resolve Rive commit
         id: rive
@@ -56,12 +74,7 @@ jobs:
         run: ./scripts/build_rive.sh release
 
       - name: Configure plugin
-        # Homebrew obs ships libobs framework under the cellar; use it as
-        # the LIBOBS_PATH so our CMake find logic picks it up.
-        run: |
-          OBS_PREFIX=$(brew --prefix obs)
-          cmake -B build -DCMAKE_BUILD_TYPE=Release \
-            -DLIBOBS_PATH="$OBS_PREFIX"
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DLIBOBS_PATH="${OBS_PATH}"
 
       - name: Build plugin
         run: cmake --build build --config Release --parallel
@@ -137,16 +150,29 @@ jobs:
 
       - name: Download OBS Studio SDK
         shell: pwsh
-        # OBS's CI install for Windows is just an unzip of the installer's
-        # binary tree; we point CMake at it via LIBOBS_PATH.
+        # The official Windows release zip is a dev-friendly distribution -
+        # it includes obs.dll, obs.lib (the import lib), and headers under
+        # include/obs/. The zip extracts with a top-level OBS-Studio/ folder,
+        # so we locate obs-module.h after extraction and point LIBOBS_PATH at
+        # the dir that holds include/ + bin/.
         run: |
           $obsVersion = "30.2.3"
           $url = "https://github.com/obsproject/obs-studio/releases/download/$obsVersion/OBS-Studio-$obsVersion-Windows.zip"
           $dest = "$env:RUNNER_TEMP\obs"
           New-Item -ItemType Directory -Force -Path $dest | Out-Null
           Invoke-WebRequest -Uri $url -OutFile "$dest\obs.zip"
-          Expand-Archive -Path "$dest\obs.zip" -DestinationPath $dest
-          "OBS_PATH=$dest" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Expand-Archive -Path "$dest\obs.zip" -DestinationPath $dest -Force
+          $hdr = Get-ChildItem -Path $dest -Recurse -Filter "obs-module.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $hdr) {
+              Write-Host "Extracted tree:"
+              Get-ChildItem -Path $dest -Recurse -Depth 3 | ForEach-Object { Write-Host $_.FullName }
+              throw "obs-module.h not found anywhere under $dest"
+          }
+          # $hdr.Directory = .../include/obs   -> grandparent is the SDK root.
+          $obsRoot = $hdr.Directory.Parent.Parent.FullName
+          Write-Host "Located obs-module.h: $($hdr.FullName)"
+          Write-Host "Using OBS_PATH=$obsRoot"
+          "OBS_PATH=$obsRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Configure plugin
         run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DLIBOBS_PATH="${{ env.OBS_PATH }}"
@@ -183,9 +209,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential cmake ninja-build clang lld \
-            libobs-dev libobs0 \
-            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev \
-            premake5
+            libobs-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev
+
+      - name: Install premake5
+        run: |
+          version="5.0.0-beta8"
+          url="https://github.com/premake/premake-core/releases/download/v${version}/premake-${version}-linux.tar.gz"
+          dest="$RUNNER_TEMP/premake"
+          mkdir -p "$dest"
+          curl -fsSL "$url" | tar -xz -C "$dest"
+          echo "$dest" >> "$GITHUB_PATH"
+          "$dest/premake5" --version
 
       - name: Resolve Rive commit
         id: rive

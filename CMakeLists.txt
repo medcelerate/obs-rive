@@ -41,7 +41,25 @@ set(LIBOBS_PATH "" CACHE PATH "Path to an OBS Studio install or build tree")
 
 find_package(libobs CONFIG QUIET)
 if(NOT libobs_FOUND)
-    if(LIBOBS_PATH)
+    set(LIBOBS_INCLUDE_DIR "")
+    set(LIBOBS_LIBRARY     "")
+
+    if(APPLE AND LIBOBS_PATH)
+        # On macOS libobs ships as a .framework inside OBS.app. Accept either
+        # LIBOBS_PATH=<dir containing libobs.framework> or
+        # LIBOBS_PATH=<.../libobs.framework> directly.
+        if(IS_DIRECTORY "${LIBOBS_PATH}/libobs.framework")
+            set(_OBS_FRAMEWORK "${LIBOBS_PATH}/libobs.framework")
+        elseif(EXISTS "${LIBOBS_PATH}/Headers/obs-module.h")
+            set(_OBS_FRAMEWORK "${LIBOBS_PATH}")
+        endif()
+        if(_OBS_FRAMEWORK)
+            set(LIBOBS_INCLUDE_DIR "${_OBS_FRAMEWORK}/Headers")
+            set(LIBOBS_LIBRARY     "${_OBS_FRAMEWORK}")
+        endif()
+    endif()
+
+    if(NOT LIBOBS_INCLUDE_DIR AND LIBOBS_PATH)
         find_path(LIBOBS_INCLUDE_DIR
             NAMES obs-module.h
             HINTS "${LIBOBS_PATH}/include" "${LIBOBS_PATH}" "${LIBOBS_PATH}/libobs"
@@ -66,14 +84,23 @@ if(NOT libobs_FOUND)
 
     if(NOT LIBOBS_INCLUDE_DIR OR NOT LIBOBS_LIBRARY)
         message(FATAL_ERROR
-            "Could not find libobs. Pass -DLIBOBS_PATH=<obs install or build dir>, "
-            "or install libobs system-wide (apt install libobs-dev / brew install obs / etc).")
+            "Could not find libobs. Pass -DLIBOBS_PATH=<obs install or build dir, "
+            "or libobs.framework on macOS>, or install libobs system-wide.")
     endif()
 
-    add_library(OBS::libobs UNKNOWN IMPORTED)
-    set_target_properties(OBS::libobs PROPERTIES
-        IMPORTED_LOCATION             "${LIBOBS_LIBRARY}"
-        INTERFACE_INCLUDE_DIRECTORIES "${LIBOBS_INCLUDE_DIR}")
+    if(APPLE AND _OBS_FRAMEWORK)
+        # Link as a framework: clang accepts the .framework dir as a -framework
+        # input via the IMPORTED_LOCATION + FRAMEWORK property combo.
+        add_library(OBS::libobs INTERFACE IMPORTED)
+        set_target_properties(OBS::libobs PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES "${LIBOBS_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES "-F${LIBOBS_PATH} -framework libobs")
+    else()
+        add_library(OBS::libobs UNKNOWN IMPORTED)
+        set_target_properties(OBS::libobs PROPERTIES
+            IMPORTED_LOCATION             "${LIBOBS_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${LIBOBS_INCLUDE_DIR}")
+    endif()
 endif()
 
 # -----------------------------------------------------------------------------
