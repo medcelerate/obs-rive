@@ -636,12 +636,18 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
+          key: rive-linux-${{ steps.rive.outputs.sha }}-v3
 
       - name: Build Rive runtime
         if: steps.rive-cache.outputs.cache-hit != 'true'
-        # Pass explicit make targets so gmake2 skips glfw3/path_fiddle (the
-        # Rive sample app needs libxcursor-dev etc that we don't install).
+        # -fPIC: Rive's archives are linked into our shared library, so every
+        # input has to be position-independent. The premake-generated
+        # Makefiles propagate CFLAGS/CXXFLAGS from the environment.
+        # Targets list skips glfw3/path_fiddle (the Rive sample app needs
+        # libxcursor-dev etc that we don't install).
+        env:
+          CFLAGS: "-fPIC"
+          CXXFLAGS: "-fPIC"
         run: ./scripts/build_rive.sh release -- ${{ env.RIVE_NINJA_TARGETS }}
 
       - name: Save Rive build cache
@@ -651,7 +657,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: third_party/rive-runtime/renderer/out
-          key: rive-linux-${{ steps.rive.outputs.sha }}-v2
+          key: rive-linux-${{ steps.rive.outputs.sha }}-v3
 
       # ----- Plugin -----
       - name: Configure plugin
