@@ -40,8 +40,15 @@ jobs:
           dmg="OBS-Studio-${OBS_VERSION}-macOS-Apple.dmg"
           url="https://github.com/obsproject/obs-studio/releases/download/${OBS_VERSION}/${dmg}"
           curl -fsSL -o "$RUNNER_TEMP/$dmg" "$url"
-          mp=$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/$dmg" | awk 'END{print $3}')
-          echo "Mounted at $mp"
+          # hdiutil attach output is tab-separated; the mount-point column
+          # (last field) can contain spaces ("OBS Studio"). awk -F'\t' picks
+          # the whole field intact.
+          mp=$(hdiutil attach -nobrowse -readonly "$RUNNER_TEMP/$dmg" | awk -F'\t' '/\/Volumes\// {print $NF}' | tail -n1)
+          if [ -z "$mp" ] || [ ! -d "$mp" ]; then
+              echo "ERROR: could not parse mount point from hdiutil attach output" >&2
+              exit 1
+          fi
+          echo "Mounted at \"$mp\""
           echo "--- volume contents ---"
           ls "$mp"
           app=$(find "$mp" -maxdepth 2 -name "*.app" -type d | head -n1)
@@ -165,30 +172,88 @@ jobs:
           RIVE_BUILD_SYSTEM: ninja
         run: scripts\build_rive.bat release -- ${{ env.RIVE_NINJA_TARGETS }}
 
-      - name: Download OBS Studio SDK
-        shell: pwsh
-        # The official Windows release zip is a dev-friendly distribution -
-        # it includes obs.dll, obs.lib (the import lib), and headers under
-        # include/obs/. The zip extracts with a top-level OBS-Studio/ folder,
-        # so we locate obs-module.h after extraction and point LIBOBS_PATH at
-        # the dir that holds include/ + bin/.
+      # ---------------------------------------------------------------------
+      # OBS doesn't publish a Windows SDK - the Windows release zip is
+      # runtime-only. To compile and link our plugin we clone obs-studio at
+      # a pinned tag, pull in the matching obs-deps third-party prebuilts,
+      # and build just the libobs target. ~15 min cold, ~30 s on cache hit.
+      # ---------------------------------------------------------------------
+      - name: Restore OBS build cache
+        id: obs-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/obs-install
+          key: obs-sdk-windows-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+        env:
+          OBS_VERSION: "30.2.3"
+          OBS_DEPS_VERSION: "2024-09-12"
+
+      - name: Clone OBS Studio source
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        shell: bash
+        env:
+          OBS_VERSION: "30.2.3"
         run: |
-          $obsVersion = "30.2.3"
-          $url = "https://github.com/obsproject/obs-studio/releases/download/$obsVersion/OBS-Studio-$obsVersion-Windows.zip"
-          $dest = "$env:RUNNER_TEMP\obs"
-          New-Item -ItemType Directory -Force -Path $dest | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile "$dest\obs.zip"
-          Expand-Archive -Path "$dest\obs.zip" -DestinationPath $dest -Force
-          $hdr = Get-ChildItem -Path $dest -Recurse -Filter "obs-module.h" -ErrorAction SilentlyContinue | Select-Object -First 1
+          git clone --depth 1 --branch "${OBS_VERSION}" --recursive \
+            https://github.com/obsproject/obs-studio.git "$RUNNER_TEMP/obs-src"
+
+      - name: Download obs-deps prebuilts
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          OBS_DEPS_VERSION: "2024-09-12"
+        run: |
+          $url = "https://github.com/obsproject/obs-deps/releases/download/$env:OBS_DEPS_VERSION/windows-deps-$env:OBS_DEPS_VERSION-x64.zip"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\obs-deps.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\obs-deps.zip" -DestinationPath "$env:RUNNER_TEMP\obs-deps" -Force
+
+      - name: Configure + build libobs from source
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          cmake -S "$env:RUNNER_TEMP\obs-src" -B "$env:RUNNER_TEMP\obs-build" `
+            -G "Visual Studio 17 2022" -A x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="$env:RUNNER_TEMP\obs-install" `
+            -DCMAKE_PREFIX_PATH="$env:RUNNER_TEMP\obs-deps" `
+            -DENABLE_UI=OFF `
+            -DENABLE_SCRIPTING=OFF `
+            -DENABLE_BROWSER=OFF `
+            -DENABLE_PLUGINS=OFF `
+            -DENABLE_VLC=OFF `
+            -DENABLE_VST=OFF `
+            -DENABLE_AJA=OFF `
+            -DENABLE_DECKLINK=OFF `
+            -DENABLE_VIRTUALCAM=OFF `
+            -DENABLE_RTMPS=OFF `
+            -DENABLE_WEBSOCKET=OFF
+          cmake --build "$env:RUNNER_TEMP\obs-build" --config Release --target libobs --parallel
+          # The 'obs_libraries' install component drops just the headers +
+          # import lib + DLL, which is everything our plugin needs.
+          cmake --install "$env:RUNNER_TEMP\obs-build" --config Release --component obs_libraries
+
+      - name: Save OBS build cache
+        if: steps.obs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/obs-install
+          key: obs-sdk-windows-${{ env.OBS_VERSION }}-${{ env.OBS_DEPS_VERSION }}-v1
+        env:
+          OBS_VERSION: "30.2.3"
+          OBS_DEPS_VERSION: "2024-09-12"
+
+      - name: Locate OBS SDK
+        shell: pwsh
+        run: |
+          $sdk = "$env:RUNNER_TEMP\obs-install"
+          $hdr = Get-ChildItem -Path $sdk -Recurse -Filter "obs-module.h" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $hdr) {
-              Write-Host "Extracted tree:"
-              Get-ChildItem -Path $dest -Recurse -Depth 3 | ForEach-Object { Write-Host $_.FullName }
-              throw "obs-module.h not found anywhere under $dest"
+              Write-Host "Install tree (depth 4):"
+              Get-ChildItem -Path $sdk -Recurse -Depth 4 | ForEach-Object { Write-Host $_.FullName }
+              throw "obs-module.h not found under $sdk after build+install"
           }
-          # $hdr.Directory = .../include/obs   -> grandparent is the SDK root.
           $obsRoot = $hdr.Directory.Parent.Parent.FullName
-          Write-Host "Located obs-module.h: $($hdr.FullName)"
-          Write-Host "Using OBS_PATH=$obsRoot"
+          Write-Host "OBS SDK root: $obsRoot"
           "OBS_PATH=$obsRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Configure plugin
@@ -229,16 +294,10 @@ jobs:
             libobs-dev \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev
 
-      - name: Install premake5
-        run: |
-          version="5.0.0-beta8"
-          url="https://github.com/premake/premake-core/releases/download/v${version}/premake-${version}-linux.tar.gz"
-          dest="$RUNNER_TEMP/premake"
-          mkdir -p "$dest"
-          curl -fsSL "$url" | tar -xz -C "$dest"
-          chmod +x "$dest/premake5"
-          echo "$dest" >> "$GITHUB_PATH"
-          "$dest/premake5" --version
+      # The premake5 prebuilt for Linux is built against a newer glibc than
+      # ubuntu-22.04 ships, so we don't install it here. Rive's build_rive.sh
+      # clones premake-core and bootstraps it from source instead. Adds ~30s
+      # to first Rive build; cached after that.
 
       - name: Resolve Rive commit
         id: rive

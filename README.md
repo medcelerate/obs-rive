@@ -46,7 +46,7 @@ The `IBackend` abstraction is identical to the one in
 | Platform | Tools |
 |---|---|
 | macOS    | Xcode CLT, `brew install premake cmake obs` |
-| Windows  | Visual Studio 2022 (C++ workload), [`premake5.exe`](https://github.com/premake/premake-core/releases) on `PATH`, OBS Studio installed |
+| Windows  | Visual Studio 2022 (C++ workload), [`premake5.exe`](https://github.com/premake/premake-core/releases) on `PATH`. OBS doesn't publish a Windows SDK, so for local builds either install OBS via the installer with the "Plugin Development Kit" component checked, or follow the same clone-and-build-libobs flow CI uses (see `.github/workflows/build.yml`). |
 | Linux    | `build-essential cmake ninja-build clang libobs-dev libegl1-mesa-dev libgl1-mesa-dev`, plus `premake5` ([Linux release zip](https://github.com/premake/premake-core/releases) — Ubuntu has no package). |
 
 ## Build

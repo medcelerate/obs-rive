@@ -33,20 +33,19 @@ if [ ! -d "$RIVE_DIR/.git" ] && [ ! -f "$RIVE_DIR/premake5_v2.lua" ]; then
     git clone --recursive "$RIVE_REPO" "$RIVE_DIR"
 fi
 
-# Make sure premake5 ships into the path Rive expects.
-if ! command -v premake5 >/dev/null 2>&1; then
-    echo ">> premake5 not on PATH - using the copy in rive-runtime/build if present"
-fi
 export PATH="$RIVE_DIR/build:$PATH"
 
-# Some macOS environments are missing premake5; fetch a binary if so.
+# Rive's own build_rive.sh bootstraps premake5 if it isn't reachable:
+#   - macOS / Linux: clones premake-core and `make -f Bootstrap.mak`
+#   - Windows: downloads the prebuilt binary
+# So we don't have to install it ourselves. macOS gets a fast-path via
+# Homebrew when available; everywhere else we just let Rive handle it.
 if ! command -v premake5 >/dev/null 2>&1 && [ ! -x "$RIVE_DIR/build/premake5" ]; then
-    echo ">> Bootstrapping premake5 via Homebrew"
-    if command -v brew >/dev/null 2>&1; then
-        brew install premake
+    if [ "$(uname -s)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then
+        echo ">> Installing premake via Homebrew"
+        brew install premake || true
     else
-        echo "ERROR: install premake5 (e.g. 'brew install premake') and re-run." >&2
-        exit 1
+        echo ">> premake5 not on PATH - Rive will bootstrap it from source"
     fi
 fi
 
