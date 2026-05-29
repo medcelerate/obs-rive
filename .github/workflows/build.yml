@@ -467,6 +467,8 @@ jobs:
             libx11-xcb-dev libxcb1-dev libxcb-randr0-dev libxcb-xinerama0-dev \
             libxcb-shm0-dev libxcb-xfixes0-dev libxcb-composite0-dev \
             libxcomposite-dev libxinerama-dev libxrandr-dev libx11-dev \
+            libwayland-dev libwayland-client0 libwayland-server0 \
+            libxkbcommon-dev wayland-protocols \
             uthash-dev
 
       # ----- OBS SDK -----
