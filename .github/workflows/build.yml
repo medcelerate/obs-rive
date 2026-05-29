@@ -66,9 +66,16 @@ jobs:
           fi
           echo "Found libobs.framework at $fw"
           mkdir -p "$RUNNER_TEMP/obs"
-          cp -R "$fw" "$RUNNER_TEMP/obs/"
+          # ditto preserves framework Versions/Current symlinks correctly;
+          # plain cp -R has been seen to break the Headers symlink chain on
+          # bundles copied off a read-only DMG.
+          ditto "$fw" "$RUNNER_TEMP/obs/libobs.framework"
           hdiutil detach "$mp" -force
-          ls "$RUNNER_TEMP/obs/libobs.framework/Headers" | head
+          echo "--- copied framework layout ---"
+          ls -la "$RUNNER_TEMP/obs/libobs.framework"
+          ls -la "$RUNNER_TEMP/obs/libobs.framework/Headers" | head
+          [ -f "$RUNNER_TEMP/obs/libobs.framework/Headers/obs-module.h" ] || {
+              echo "ERROR: Headers/obs-module.h not present after copy" >&2; exit 1; }
           echo "OBS_PATH=$RUNNER_TEMP/obs" >> "$GITHUB_ENV"
 
       - name: Resolve Rive commit
@@ -228,9 +235,20 @@ jobs:
             -DENABLE_RTMPS=OFF `
             -DENABLE_WEBSOCKET=OFF
           cmake --build "$env:RUNNER_TEMP\obs-build" --config Release --target libobs --parallel
-          # The 'obs_libraries' install component drops just the headers +
-          # import lib + DLL, which is everything our plugin needs.
+          # The 'obs_libraries' component drops headers + import lib + DLL.
+          # OBS's UI subproject still emits an install rule for
+          # obs-frontend-api.dll even with ENABLE_UI=OFF and fails there,
+          # AFTER libobs is fully installed - so we tolerate a non-zero exit
+          # and verify success by checking that obs-module.h is present.
+          $ErrorActionPreference = 'Continue'
           cmake --install "$env:RUNNER_TEMP\obs-build" --config Release --component obs_libraries
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path "$env:RUNNER_TEMP\obs-install\include\obs\obs-module.h")) {
+              throw "libobs install incomplete - obs-module.h is missing."
+          }
+          if (-not (Get-ChildItem -Path "$env:RUNNER_TEMP\obs-install" -Recurse -Filter "obs.lib" -ErrorAction SilentlyContinue)) {
+              throw "libobs install incomplete - obs.lib is missing."
+          }
 
       - name: Save OBS build cache
         if: steps.obs-cache.outputs.cache-hit != 'true'
@@ -287,10 +305,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install build deps
+        # llvm: gives us llvm-ar, which Rive's premake config uses to archive
+        # static libs on Linux. The clang apt package alone doesn't include it.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential cmake ninja-build clang lld \
+            build-essential cmake ninja-build clang lld llvm \
             libobs-dev \
             libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev
 
