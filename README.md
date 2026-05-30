@@ -8,38 +8,6 @@ GPU renderer used by [TDRive](../TDRive) into OBS via an async video source.
 - **Windows** (x64) — D3D11 backend, `obs-rive.dll`
 - **Linux** (x64) — GL backend (EGL pbuffer + desktop GL), `obs-rive.so`
 
-## Layout
-
-```
-obs-rive/
-├── src/
-│   ├── plugin-main.cpp          # OBS module entry points
-│   ├── rive-source.{cpp}        # obs_source_info, properties, video_tick
-│   ├── rive-core.{h,cpp}        # framework-agnostic Rive plumbing
-│   ├── IBackend.h               # backend interface
-│   ├── backend_metal.mm         # macOS Metal
-│   ├── backend_d3d11.cpp        # Windows D3D11
-│   └── backend_gl.cpp           # Linux EGL + desktop GL
-├── data/locale/en-US.ini        # OBS UI strings
-├── scripts/
-│   ├── build_rive.sh            # macOS + Linux Rive build
-│   └── build_rive.bat           # Windows Rive build
-├── third_party/rive-runtime/    # cloned by build_rive.{sh,bat}
-└── CMakeLists.txt
-```
-
-## Architecture
-
-`obs-rive` runs Rive's renderer **outside** OBS's graphics subsystem — we
-own a Metal / D3D11 / GL context, render the artboard offscreen, read pixels
-back to CPU, and hand the BGRA buffer to OBS via `obs_source_output_video()`.
-
-That keeps interop simple at the cost of one GPU→CPU readback per frame.
-For higher throughput a future v2 could share textures with `gs_texture_t`,
-but the async path is the same one OBS's own Image / Media sources use.
-
-The `IBackend` abstraction is identical to the one in
-[TDRive](../TDRive) — only the host glue layer differs.
 
 ## Prerequisites
 
