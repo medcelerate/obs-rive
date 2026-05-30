@@ -69,10 +69,3 @@ artboard changes — no manual wiring.
 OBS doesn't have a dedicated pulse control, so trigger-typed inputs and VM
 properties show as a toggle. **Switching the toggle ON fires the trigger.**
 Switch it OFF and ON again to fire it again.
-
-## Status
-
-This is a first cut. macOS + Windows mirror the TDRive code paths and link
-cleanly. Linux's GL backend is implemented but unverified — I expect 1–2
-rounds of "missing GL extension / EGL config" issues on the first real run.
-PRs welcome.
