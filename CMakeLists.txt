@@ -246,11 +246,13 @@ elseif(WIN32)
         WIN32_LEAN_AND_MEAN
         _CRT_SECURE_NO_WARNINGS
     )
-    # OBS's util_uint64.h calls _udiv128() but doesn't include <intrin.h>;
-    # MSVC's cl.exe provides the intrinsic implicitly, clang-cl doesn't.
-    # Since we configure with -T ClangCL (to match Rive's clang-cl archives),
-    # we have to force-include intrin.h into every TU.
-    target_compile_options(obs-rive PRIVATE /FIintrin.h)
+    # OBS's util_uint64.h calls _udiv128 / _umul128 under a feature check
+    # that clang-cl satisfies, but the intrinsics aren't actually exposed
+    # by clang-cl. Force-include a small compat header that supplies
+    # __int128-backed fallbacks via #define, so the OBS macros expand to
+    # something clang can codegen.
+    target_compile_options(obs-rive PRIVATE
+        "/FI${CMAKE_SOURCE_DIR}/src/clang_cl_obs_compat.h")
     target_link_libraries(obs-rive PRIVATE
         d3d11 dxgi dxguid d3dcompiler
     )
