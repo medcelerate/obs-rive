@@ -212,6 +212,9 @@ elseif(WIN32)
     set_target_properties(obs-rive PROPERTIES PREFIX "")
 else()
     add_library(obs-rive SHARED ${OBS_RIVE_SOURCES})
+    # Drop the default 'lib' prefix CMake adds on Linux - OBS plugins on
+    # Linux are conventionally named '<name>.so', not 'lib<name>.so'.
+    set_target_properties(obs-rive PROPERTIES PREFIX "")
 endif()
 
 target_include_directories(obs-rive PRIVATE
@@ -243,6 +246,11 @@ elseif(WIN32)
         WIN32_LEAN_AND_MEAN
         _CRT_SECURE_NO_WARNINGS
     )
+    # OBS's util_uint64.h calls _udiv128() but doesn't include <intrin.h>;
+    # MSVC's cl.exe provides the intrinsic implicitly, clang-cl doesn't.
+    # Since we configure with -T ClangCL (to match Rive's clang-cl archives),
+    # we have to force-include intrin.h into every TU.
+    target_compile_options(obs-rive PRIVATE /FIintrin.h)
     target_link_libraries(obs-rive PRIVATE
         d3d11 dxgi dxguid d3dcompiler
     )
